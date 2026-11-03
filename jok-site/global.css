@@ -1,0 +1,64 @@
+/* JIMMY ANDREW O’KEEFFE. Void black, warm white, Fibonacci spacing. */
+:root {
+  --ground: #000000;
+  --ink: #F4F4F0;
+  --gutter: clamp(21px, 5.5vw, 89px);
+  --block: 0.4217; /* height of the block over its width: three names cut to one width */
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+/* One screen, the block alone. Letters fly in from outside it, so the stage clips them. */
+.stage {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: var(--gutter);
+  padding-bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
+  overflow: hidden;
+  overflow: clip;
+}
+
+.mark {
+  width: min(100%, calc((100vh - 2 * var(--gutter)) / var(--block)));
+  width: min(100%, calc((100svh - 2 * var(--gutter)) / var(--block)));
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mark svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  fill: var(--ink);
+  shape-rendering: geometricPrecision;
+}
+
+html.cue .mark { visibility: hidden; }
+
+@media (prefers-reduced-motion: no-preference) {
+  html { cursor: pointer; }
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
