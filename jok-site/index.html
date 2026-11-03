@@ -70,13 +70,16 @@
   }
 
   var DT = 1 / 240, ARRIVE = .95, SNAP = 1.45, END = 2.5;     /* seconds */
-  var E = .88, DRAG = 1.6, SPIN_DRAG = 1.4, KICK = .45;     /* restitution, damping after first contact, spin from glancing blows */
+  var E = .72, DRAG = 1.6, SPIN_DRAG = 1.4, FRICTION = .22;     /* restitution, damping after first contact, contact friction */
   var W0 = 2 * Math.PI * 3.4, Z = .6;                         /* the snap: a spring at 3.4 Hz, damping ratio 0.6 */
   var D2R = Math.PI / 180;
 
   var L = Array.prototype.map.call(svg.querySelectorAll('use'), function (u) {
-    var d = u.dataset;
-    return { u: u, tx: +d.x, ty: +d.y, s: +d.s, r: d.r * .8, d: +d.d, m: d.r * d.r };
+    var d = u.dataset, box = svg.querySelector(u.getAttribute('href')).getBBox();
+    var hw = box.width * d.s / 2, hh = box.height * d.s / 2, m = hw * hh;
+    return { u: u, tx: +d.x, ty: +d.y, s: +d.s, d: +d.d,
+             hw: hw, hh: hh, ox: (box.x + box.width / 2) * d.s,
+             oy: (box.y + box.height / 2) * d.s, m: m, inertia: m * (hw * hw + hh * hh) / 3 };
   });
   var n = L.length, track = null, start = null, playing = false;
 
@@ -85,6 +88,59 @@
     l.u.setAttribute('transform', 'translate(' + x.toFixed(2) + ' ' + y.toFixed(2) + ') rotate(' + a.toFixed(2) + ') scale(' + l.s + ')');
   }
   function rest() { L.forEach(function (l) { draw(l, l.tx, l.ty, 0); }); }
+
+  function bounds(o) {
+    var c = Math.cos(o.a * D2R), s = Math.sin(o.a * D2R), l = o.l;
+    return { x: o.x + c * l.ox - s * l.oy, y: o.y + s * l.ox + c * l.oy,
+             axes: [{ x: c, y: s }, { x: -s, y: c }] };
+  }
+  function radius(l, box, axis) {
+    return l.hw * Math.abs(box.axes[0].x * axis.x + box.axes[0].y * axis.y) +
+           l.hh * Math.abs(box.axes[1].x * axis.x + box.axes[1].y * axis.y);
+  }
+  function collide(A, C) {
+    var a = bounds(A), c = bounds(C), dx = c.x - a.x, dy = c.y - a.y;
+    var axes = a.axes.concat(c.axes), depth = Infinity, normal;
+    for (var i = 0; i < axes.length; i++) {
+      var axis = axes[i], distance = dx * axis.x + dy * axis.y;
+      var overlap = radius(A.l, a, axis) + radius(C.l, c, axis) - Math.abs(distance);
+      if (overlap <= 0) return;
+      if (overlap < depth) {
+        depth = overlap;
+        var sign = distance < 0 ? -1 : 1;
+        normal = { x: axis.x * sign, y: axis.y * sign };
+      }
+    }
+    var nx = normal.x, ny = normal.y, tx = -ny, ty = nx;
+    /* Midpoint of the shared face span gives a stable contact even face-on. */
+    var amin = a.x * tx + a.y * ty, cmin = c.x * tx + c.y * ty;
+    var ar = radius(A.l, a, { x: tx, y: ty }), cr = radius(C.l, c, { x: tx, y: ty });
+    var tangent = (Math.max(amin - ar, cmin - cr) + Math.min(amin + ar, cmin + cr)) / 2;
+    var face = (a.x * nx + a.y * ny + radius(A.l, a, normal) +
+                c.x * nx + c.y * ny - radius(C.l, c, normal)) / 2;
+    var px = nx * face + tx * tangent, py = ny * face + ty * tangent;
+    var ax = px - A.x, ay = py - A.y, cx = px - C.x, cy = py - C.y;
+    var ia = 1 / A.l.m, ic = 1 / C.l.m, iiA = 1 / A.l.inertia, iiC = 1 / C.l.inertia;
+    var wa = A.va * D2R, wc = C.va * D2R;
+    var vx = C.vx - wc * cy - A.vx + wa * ay;
+    var vy = C.vy + wc * cx - A.vy - wa * ax;
+    var vn = vx * nx + vy * ny;
+    if (vn < 0) {
+      var an = ax * ny - ay * nx, cn = cx * ny - cy * nx;
+      var impulse = -(1 + (vn < -40 ? E : 0)) * vn / (ia + ic + an * an * iiA + cn * cn * iiC);
+      var at = ax * ty - ay * tx, ct = cx * ty - cy * tx;
+      var friction = -(vx * tx + vy * ty) / (ia + ic + at * at * iiA + ct * ct * iiC);
+      friction = Math.max(-FRICTION * impulse, Math.min(FRICTION * impulse, friction));
+      var jx = impulse * nx + friction * tx, jy = impulse * ny + friction * ty;
+      A.vx -= jx * ia; A.vy -= jy * ia; C.vx += jx * ic; C.vy += jy * ic;
+      A.va -= (ax * jy - ay * jx) * iiA / D2R;
+      C.va += (cx * jy - cy * jx) * iiC / D2R;
+      A.hit = C.hit = true;
+    }
+    var push = Math.max(0, depth - .25) * .65 / (ia + ic);
+    A.x -= nx * push * ia; A.y -= ny * push * ia;
+    C.x += nx * push * ic; C.y += ny * push * ic;
+  }
 
   function simulate() {
     var vb = svg.viewBox.baseVal, box = svg.getBoundingClientRect(), k = vb.width / (box.width || 1);
@@ -113,26 +169,16 @@
     var steps = Math.ceil(END / DT), out = new Float32Array((steps + 1) * n * 3);
     for (var s = 0; s <= steps; s++) {
       var now = s * DT;
-      /* contact: circles push apart, trade momentum, and a glancing blow sets them spinning */
-      for (var p = 0; p < n; p++) {
-        var A = B[p];
-        if (now >= A.snap) continue;
-        for (var q = p + 1; q < n; q++) {
-          var C = B[q];
-          if (now >= C.snap) continue;
-          var dx = C.x - A.x, dy = C.y - A.y, R = A.l.r + C.l.r, d2 = dx * dx + dy * dy;
-          if (d2 >= R * R || d2 === 0) continue;
-          var d = Math.sqrt(d2), nx = dx / d, ny = dy / d, ia = 1 / A.l.m, ic = 1 / C.l.m;
-          var push = (R - d) / (ia + ic) * .5;
-          A.x -= nx * push * ia; A.y -= ny * push * ia; C.x += nx * push * ic; C.y += ny * push * ic;
-          var rvx = C.vx - A.vx, rvy = C.vy - A.vy, vn = rvx * nx + rvy * ny;
-          if (vn < 0) {
-            var jn = -(1 + E) * vn / (ia + ic);
-            A.vx -= jn * nx * ia; A.vy -= jn * ny * ia; C.vx += jn * nx * ic; C.vy += jn * ny * ic;
-            var vt = -rvx * ny + rvy * nx;
-            A.va += KICK * vt / A.l.r / D2R * (C.l.m / (A.l.m + C.l.m));
-            C.va -= KICK * vt / C.l.r / D2R * (A.l.m / (A.l.m + C.l.m));
-            A.hit = C.hit = true;
+      /* Rotating glyph bounds meet at a contact point: narrow letters no longer
+         bounce off an oversized circle. Two solver passes clear crowded impacts. */
+      for (var pass = 0; pass < 2; pass++) {
+        for (var p = 0; p < n; p++) {
+          var A = B[p];
+          if (now >= A.snap) continue;
+          for (var q = p + 1; q < n; q++) {
+            var C = B[q];
+            if (now >= C.snap) continue;
+            collide(A, C);
           }
         }
       }
