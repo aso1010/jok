@@ -69,9 +69,9 @@
     return;
   }
 
-  var DT = 1 / 240, ARRIVE = .62, SNAP = 1.45, END = 2.5;     /* seconds */
-  var E = .96, DRAG = .45, SPIN_DRAG = .5, FRICTION = .4;     /* restitution, damping after first contact, contact friction */
-  var W0 = 2 * Math.PI * 3.4, Z = .6;                         /* the snap: a spring at 3.4 Hz, damping ratio 0.6 */
+  var DT = 1 / 240, ARRIVE = .95, SNAP = 2.12, END = 2.85;     /* seconds */
+  var E = .96, DRAG = 1.1, SPIN_DRAG = .9, FRICTION = .4;     /* restitution, damping after first contact, contact friction */
+  var W0 = 2 * Math.PI * 6, Z = .9;                         /* a brisk, nearly critically damped snap into attention */
   var D2R = Math.PI / 180;
 
   var L = Array.prototype.map.call(svg.querySelectorAll('use'), function (u) {
@@ -107,16 +107,16 @@
     var transform = 'translate(' + x.toFixed(2) + ' ' + y.toFixed(2) + ') rotate(' + a.toFixed(2) + ') scale(' + l.s + ')';
     l.u.setAttribute('transform', transform);
     var age = animationTime - l.breakAt;
-    var broken = age >= 0 && animationTime < END - .08;
+    var broken = age >= 0 && animationTime < 2.02;
     l.u.style.display = broken ? 'none' : '';
     /* Pieces burst apart quickly, then the magnetic pull reunites every seam. */
-    var gather = Math.max(0, Math.min(1, (animationTime - SNAP) / (END - .16 - SNAP)));
+    var gather = Math.max(0, Math.min(1, (animationTime - 1.35) / .65));
     var envelope = (1 - Math.exp(-Math.max(0, age) * 12)) * (1 - gather * gather * (3 - 2 * gather));
     l.shards.forEach(function (shard) {
       shard.group.style.display = broken ? '' : 'none';
       if (!broken) return;
-      var dx = shard.dx * 2.8 * envelope / l.s;
-      var dy = (shard.dy * 2.8 + Math.max(0, age) * 45) * envelope / l.s;
+      var dx = shard.dx * 1.7 * envelope / l.s;
+      var dy = (shard.dy * 1.7 + Math.max(0, age) * 45) * envelope / l.s;
       shard.group.setAttribute('transform', transform + ' translate(' + dx + ' ' + dy + ') rotate(' +
         (shard.spin * Math.max(0, age) * envelope) + ' ' + (l.ox / l.s) + ' ' + (l.oy / l.s) + ')');
     });
@@ -201,9 +201,9 @@
       var x = cx + dx * far, y = cy + dy * far;
       var pa = rnd(0, 2 * Math.PI), pr = Math.sqrt(Math.random()) * vb.width * .035;
       var px = cx + Math.cos(pa) * pr, py = cy + Math.sin(pa) * pr * .6, T = ARRIVE + rnd(-.02, .02);
-      var spin = rnd(180, 480) * (Math.random() < .5 ? -1 : 1);
-      return { l: l, x: x, y: y, vx: (px - x) / T, vy: (py - y) / T, a: rnd(-180, 180), va: spin, hit: false,
-               snap: SNAP + i * .009, ta: 0 };
+      var spin = rnd(25, 65) * (Math.random() < .5 ? -1 : 1);
+      return { l: l, x: x, y: y, vx: (px - x) / T, vy: (py - y) / T, a: rnd(-18, 18), va: spin, hit: false,
+               snap: SNAP, ta: 0 };
     });
 
     var steps = Math.ceil(END / DT), out = new Float32Array((steps + 1) * n * 3);
@@ -214,7 +214,7 @@
       for (var pass = 0; pass < 2; pass++) {
         for (var p = 0; p < n; p++) {
           var A = B[p];
-          if (now >= A.snap) continue;
+          if (now < .68 || now >= 1.35) continue;
           for (var q = p + 1; q < n; q++) {
             var C = B[q];
             if (now >= C.snap) continue;
@@ -224,7 +224,7 @@
       }
       for (var b = 0; b < n; b++) {
         var o = B[b], l = o.l;
-        if (o.hit && l.breakAt === Infinity) l.breakAt = now;
+        if (o.hit && l.breakAt === Infinity) l.breakAt = now + .10;
         if (now >= o.snap) {
           /* the snap: pulled to its place and upright, carrying the speed it had */
           if (!o.locked) { o.locked = true; o.ta = Math.round(o.a / 360) * 360; }
@@ -237,6 +237,15 @@
         }
         o.va = Math.max(-1440, Math.min(1440, o.va));
         o.x += o.vx * DT; o.y += o.vy * DT; o.a += o.va * DT;
+        /* Keep the wreckage in view so the reformed letters can be seen
+           before the whole squad snaps to attention on the same beat. */
+        if (o.hit && now < SNAP) {
+          var margin = Math.max(l.hw, l.hh) + 12;
+          if (o.x < x0 + margin) { o.x = x0 + margin; o.vx = Math.abs(o.vx) * .6; }
+          if (o.x > x1 - margin) { o.x = x1 - margin; o.vx = -Math.abs(o.vx) * .6; }
+          if (o.y < y0 + margin) { o.y = y0 + margin; o.vy = Math.abs(o.vy) * .6; }
+          if (o.y > y1 - margin) { o.y = y1 - margin; o.vy = -Math.abs(o.vy) * .6; }
+        }
         var at = (s * n + b) * 3;
         out[at] = o.x; out[at + 1] = o.y; out[at + 2] = o.a;
       }
