@@ -201,13 +201,29 @@
           out[at + 2] = o.sa + (o.ta - o.sa) * slam;
           continue;
         } else if (now >= 1.4) {
-          /* Regain composure slowly, still tilted and displaced; the final
-             command at SNAP pulls every whole letter upright together. */
-          if (!o.recovering) { o.recovering = true; o.ta = Math.round(o.a / 360) * 360; }
-          var gather = 2.5, damping = 2 * .85 * gather;
-          o.vx += (-gather * gather * (o.x - l.tx) - damping * o.vx) * DT;
-          o.vy += (-gather * gather * (o.y - l.ty) - damping * o.vy) * DT;
-          o.va += (-gather * gather * (o.a - o.ta) - damping * o.va) * DT;
+          /* Resolve into readable, slightly expanded lettering. Let it inhale
+             for a beat before the 85 ms command slams the spacing shut. */
+          if (!o.recovering) {
+            o.recovering = true; o.rx = o.x; o.ry = o.y; o.ra = o.a;
+            o.rvx = o.vx; o.rvy = o.vy; o.rva = o.va;
+            o.ta = Math.round(o.a / 360) * 360;
+          }
+          var resolve = Math.min(1, (now - 1.4) / .48);
+          /* Preserve recoil velocity at the handoff and ease acceleration
+             to zero as the lettering becomes readable. */
+          var ease = resolve * resolve * resolve * (10 + resolve * (-15 + 6 * resolve));
+          var carry = resolve - 6 * Math.pow(resolve, 3) + 8 * Math.pow(resolve, 4) - 3 * Math.pow(resolve, 5);
+          var inhale = Math.max(0, Math.min(1, (now - 1.88) / (SNAP - 1.88)));
+          var breath = inhale * inhale * inhale * (10 + inhale * (-15 + 6 * inhale));
+          var spread = 1.06 + .02 * breath;
+          var bx = cx + (l.tx - cx) * spread;
+          var by = cy + (l.ty - cy) * (1.12 + .04 * breath);
+          o.x = o.rx + (bx - o.rx) * ease + o.rvx * .48 * carry;
+          o.y = o.ry + (by - o.ry) * ease + o.rvy * .48 * carry;
+          o.a = o.ra + (o.ta - o.ra) * ease + o.rva * .48 * carry;
+          var at = (s * n + b) * 3;
+          out[at] = o.x; out[at + 1] = o.y; out[at + 2] = o.a;
+          continue;
         } else if (o.hit) {
           var f = Math.exp(-DRAG * DT);
           o.vx *= f; o.vy *= f; o.va *= Math.exp(-SPIN_DRAG * DT);
@@ -225,10 +241,10 @@
         var at = (s * n + b) * 3;
         /* A short, damped shudder communicates shock without breaking a glyph. */
         var age = o.hitAt === null ? 100 : now - o.hitAt;
-        var shock = Math.sin(age * 65) * Math.exp(-age * 10);
-        out[at] = o.x + shock * 5;
-        out[at + 1] = o.y - shock * 3;
-        out[at + 2] = o.a + shock * 7;
+        var shock = Math.sin(age * 42) * Math.exp(-age * 10);
+        out[at] = o.x + shock * 3;
+        out[at + 1] = o.y - shock * 2;
+        out[at + 2] = o.a + shock * 4;
       }
     }
     return { steps: steps, pos: out };
