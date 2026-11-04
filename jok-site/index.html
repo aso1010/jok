@@ -60,7 +60,7 @@
 /* The letters start off screen on every side, each at its own angle, and fly straight in, turning as they come.
    They meet in the middle and collide: they knock each other back and spin off. Then every letter snaps to its
    place in the block, like a magnet, and the name stands still and straight. The whole run is worked out before
-   it plays, at 240 steps a second, and each frame is drawn by the page itself so the edges stay hard in motion.
+   it plays, at 720 steps a second, and each frame is drawn by the page itself so the edges stay hard in motion.
    Tap to run it again. No motion if the system asks for less. */
 (function () {
   var root = document.documentElement, svg = document.querySelector('.mark svg');
@@ -69,8 +69,8 @@
     return;
   }
 
-  var DT = 1 / 240, ARRIVE = .95, SNAP = 2.12, END = 2.85;     /* seconds */
-  var E = .96, DRAG = 1.1, SPIN_DRAG = .9, FRICTION = .4;     /* restitution, damping after first contact, contact friction */
+  var DT = 1 / 720, LAUNCH = .12, ARRIVE = .26, SNAP = 2.12, END = 2.85;     /* seconds */
+  var E = .92, DRAG = 3.8, SPIN_DRAG = 1.8, FRICTION = .18;     /* restitution, damping after first contact, contact friction */
   var SNAP_TIME = .085;                                    /* 85 ms, accelerating into a rigid stop */
   var D2R = Math.PI / 180;
 
@@ -137,7 +137,9 @@
       C.va += (cx * jy - cy * jx) * iiC / D2R;
       A.hit = C.hit = true;
     }
-    var push = Math.max(0, depth - .25) * .65 / (ia + ic);
+    /* Correct only subpixel penetration, never teleport overlapping letters.
+       Impact velocity is exchanged through equal/opposite impulses above. */
+    var push = Math.min(.3, Math.max(0, depth - .15) * .2) / (ia + ic);
     A.x -= nx * push * ia; A.y -= ny * push * ia;
     C.x += nx * push * ic; C.y += ny * push * ic;
   }
@@ -148,8 +150,8 @@
     var x0 = (0 - box.left) * k, x1 = (vw - box.left) * k, y0 = (0 - box.top) * k, y1 = (vh - box.top) * k;
     var cx = vb.width / 2, cy = vb.height / 2;
 
-    /* A tight, synchronized arrival makes the letters slam into the same area.
-       Lower drag lets the rebounds carry through before the final snap. */
+    /* Independent straight-line routes cross through a shared collision zone.
+       Different speeds and launch beats turn the meeting into a chain reaction. */
     /* every side: the directions are spread evenly round the circle and dealt out at random */
     var deal = L.map(function (_, i) { return i; });
     for (var i = n - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = deal[i]; deal[i] = deal[j]; deal[j] = t; }
@@ -157,15 +159,23 @@
 
     var B = L.map(function (l, i) {
       var a = turn + deal[i] / n * 2 * Math.PI + rnd(-.1, .1), dx = Math.cos(a), dy = Math.sin(a);
-      var ex = dx > 0 ? (x1 - cx) / dx : dx < 0 ? (x0 - cx) / dx : Infinity;
-      var ey = dy > 0 ? (y1 - cy) / dy : dy < 0 ? (y0 - cy) / dy : Infinity;
-      var far = Math.min(ex, ey) + l.d + rnd(13, 144);
+      /* Expand the viewport by the full rotating glyph radius. Every letter
+         starts entirely outside it, even on diagonal approaches. */
+      var clearance = Math.hypot(l.hw, l.hh) + Math.hypot(l.ox, l.oy) + 20;
+      var ex = dx > 0 ? (x1 + clearance - cx) / dx : dx < 0 ? (x0 - clearance - cx) / dx : Infinity;
+      var ey = dy > 0 ? (y1 + clearance - cy) / dy : dy < 0 ? (y0 - clearance - cy) / dy : Infinity;
+      var far = Math.min(ex, ey) + rnd(12, 60);
       var x = cx + dx * far, y = cy + dy * far;
-      var pa = rnd(0, 2 * Math.PI), pr = Math.sqrt(Math.random()) * vb.width * .035;
-      var px = cx + Math.cos(pa) * pr, py = cy + Math.sin(pa) * pr * .6, T = ARRIVE + rnd(-.02, .02);
+      /* Each letter has its own destination beyond the crossing, rather than
+         nineteen spokes aiming at one point. They cannot anticipate each other. */
+      var across = rnd(-.16, .16) * vb.width;
+      var along = rnd(-.08, .08) * vb.width;
+      var px = cx - dy * across + dx * along;
+      var py = cy + dx * across + dy * along;
+      var T = ARRIVE * rnd(.8, 1.2);
       var spin = rnd(25, 65) * (Math.random() < .5 ? -1 : 1);
       return { l: l, x: x, y: y, vx: (px - x) / T, vy: (py - y) / T, a: rnd(-18, 18), va: spin, hit: false,
-               snap: SNAP, ta: 0, hitAt: null };
+               launch: LAUNCH + rnd(0, .035), snap: SNAP, ta: 0 };
     });
 
     var steps = Math.ceil(END / DT), out = new Float32Array((steps + 1) * n * 3);
@@ -176,17 +186,21 @@
       for (var pass = 0; pass < 2; pass++) {
         for (var p = 0; p < n; p++) {
           var A = B[p];
-          if (now < .68 || now >= 1.35) continue;
+          if (now <= A.launch || now >= 1.35) continue;
           for (var q = p + 1; q < n; q++) {
             var C = B[q];
-            if (now >= C.snap) continue;
+            if (now <= C.launch || now >= C.snap) continue;
             collide(A, C);
           }
         }
       }
       for (var b = 0; b < n; b++) {
         var o = B[b], l = o.l;
-        if (o.hit && o.hitAt === null) o.hitAt = now;
+        if (now <= o.launch) {
+          var at = (s * n + b) * 3;
+          out[at] = o.x; out[at + 1] = o.y; out[at + 2] = o.a;
+          continue;
+        }
         if (now >= o.snap) {
           /* Accelerate into formation, then lock exactly. No spring tail. */
           if (!o.locked) {
@@ -230,21 +244,9 @@
         }
         o.va = Math.max(-1440, Math.min(1440, o.va));
         o.x += o.vx * DT; o.y += o.vy * DT; o.a += o.va * DT;
-        /* Keep recoiling letters on screen while they recover. */
-        if (o.hit && now < SNAP) {
-          var margin = Math.max(l.hw, l.hh) + 12;
-          if (o.x < x0 + margin) { o.x = x0 + margin; o.vx = Math.abs(o.vx) * .6; }
-          if (o.x > x1 - margin) { o.x = x1 - margin; o.vx = -Math.abs(o.vx) * .6; }
-          if (o.y < y0 + margin) { o.y = y0 + margin; o.vy = Math.abs(o.vy) * .6; }
-          if (o.y > y1 - margin) { o.y = y1 - margin; o.vy = -Math.abs(o.vy) * .6; }
-        }
+        /* Free recoil: no screen-edge clamps or decorative impact jitter. */
         var at = (s * n + b) * 3;
-        /* A short, damped shudder communicates shock without breaking a glyph. */
-        var age = o.hitAt === null ? 100 : now - o.hitAt;
-        var shock = Math.sin(age * 42) * Math.exp(-age * 10);
-        out[at] = o.x + shock * 3;
-        out[at + 1] = o.y - shock * 2;
-        out[at + 2] = o.a + shock * 4;
+        out[at] = o.x; out[at + 1] = o.y; out[at + 2] = o.a;
       }
     }
     return { steps: steps, pos: out };
