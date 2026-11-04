@@ -71,7 +71,7 @@
 
   var DT = 1 / 240, ARRIVE = .95, SNAP = 2.12, END = 2.85;     /* seconds */
   var E = .96, DRAG = 1.1, SPIN_DRAG = .9, FRICTION = .4;     /* restitution, damping after first contact, contact friction */
-  var W0 = 2 * Math.PI * 6, Z = .9;                         /* a brisk, nearly critically damped snap into attention */
+  var SNAP_TIME = .085;                                    /* 85 ms, accelerating into a rigid stop */
   var D2R = Math.PI / 180;
 
   var L = Array.prototype.map.call(svg.querySelectorAll('use'), function (u) {
@@ -188,16 +188,23 @@
         var o = B[b], l = o.l;
         if (o.hit && o.hitAt === null) o.hitAt = now;
         if (now >= o.snap) {
-          /* the snap: pulled to its place and upright, carrying the speed it had */
-          if (!o.locked) { o.locked = true; o.ta = Math.round(o.a / 360) * 360; }
-          o.vx += (-W0 * W0 * (o.x - l.tx) - 2 * Z * W0 * o.vx) * DT;
-          o.vy += (-W0 * W0 * (o.y - l.ty) - 2 * Z * W0 * o.vy) * DT;
-          o.va += (-W0 * W0 * (o.a - o.ta) - 2 * Z * W0 * o.va) * DT;
+          /* Accelerate into formation, then lock exactly. No spring tail. */
+          if (!o.locked) {
+            o.locked = true; o.sx = o.x; o.sy = o.y; o.sa = o.a;
+            o.ta = Math.round(o.a / 360) * 360;
+          }
+          var progress = Math.min(1, (now - o.snap) / SNAP_TIME);
+          var slam = progress * progress * progress;
+          var at = (s * n + b) * 3;
+          out[at] = o.sx + (l.tx - o.sx) * slam;
+          out[at + 1] = o.sy + (l.ty - o.sy) * slam;
+          out[at + 2] = o.sa + (o.ta - o.sa) * slam;
+          continue;
         } else if (now >= 1.4) {
           /* Regain composure slowly, still tilted and displaced; the final
              command at SNAP pulls every whole letter upright together. */
           if (!o.recovering) { o.recovering = true; o.ta = Math.round(o.a / 360) * 360; }
-          var gather = 4.5, damping = 2 * .85 * gather;
+          var gather = 2.5, damping = 2 * .85 * gather;
           o.vx += (-gather * gather * (o.x - l.tx) - damping * o.vx) * DT;
           o.vy += (-gather * gather * (o.y - l.ty) - damping * o.vy) * DT;
           o.va += (-gather * gather * (o.a - o.ta) - damping * o.va) * DT;
